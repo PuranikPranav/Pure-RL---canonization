@@ -1,0 +1,136 @@
+# ============================================================
+# Default config: Canonicalization-via-PPO
+# Tuned for a single mid-range GPU (e.g. 1x A100 / RTX 4090 /
+# Colab Pro T4 in fp16). For Gilbreth A100s leave as is.
+# ============================================================
+
+experiment:
+  name: "canon_ppo_default"
+  seed: 42
+  output_dir: "checkpoints"
+  log_dir: "logs"
+
+# ------------------------------------------------------------
+# Dataset: 100 object images, randomly rotated each episode.
+# Set data.dir to a local folder of images to use your own.
+# Otherwise, scripts/download_data.py will populate data/images/.
+# ------------------------------------------------------------
+data:
+  dir: "data/images"
+  hf_dataset: "frgfm/imagenette"     # used by download_data.py
+  hf_config: "full_size"             # imagenette requires a config name
+  hf_split: "train"
+  num_images: 100
+  image_size: 224                    # square, fed to backbone + VLM
+  # Range of initial rotations applied at episode start.
+  # Sampled uniformly from [-init_rot_max, init_rot_max].
+  init_rot_max: 90.0
+
+# ------------------------------------------------------------
+# Action space: discrete angles in degrees.
+# step_size=1 with bound=5 -> {-5,-4,...,4,5} = 11 actions.
+# ------------------------------------------------------------
+action:
+  bound: 5         # max |action| in degrees
+  step_size: 1     # granularity in degrees
+
+# ------------------------------------------------------------
+# Environment / rollout
+# ------------------------------------------------------------
+env:
+  num_envs: 16              # parallel images per rollout
+  rollout_steps: 32         # T: steps per env per rollout
+  max_episode_steps: 64     # hard cap; episodes auto-reset
+  early_terminate:
+    enabled: true
+    reward_threshold: 0.85
+    consecutive_steps: 6
+  reward_normalization: true   # running-mean/std normalization of returns
+
+# ------------------------------------------------------------
+# Policy (actor-critic). Default ~86M backbone (dinov2-base).
+# Swap to dinov2-large for ~300M (your "25% of VLM" hypothesis).
+# ------------------------------------------------------------
+policy:
+  backbone: "facebook/dinov2-base"   # alts: dinov2-small | dinov2-large
+  freeze_backbone: true              # set false to fine-tune (slower)
+  hidden_dim: 512
+  dropout: 0.1
+  dtype: "float32"                   # policy stays fp32 for stable PPO
+
+# ------------------------------------------------------------
+# Reward model. Choose ONE of: vlm | siglip | synthetic.
+#  - vlm:       Qwen2-VL-2B yes/no logits (default; matches problem spec)
+#  - siglip:    SigLIP image-text similarity (faster, weaker)
+#  - synthetic: perfect oracle from ground-truth angle (debugging only)
+# ------------------------------------------------------------
+reward:
+  type: "vlm"
+  vlm:
+    model_name: "Qwen/Qwen2-VL-2B-Instruct"
+    dtype: "float16"
+    device: "cuda"
+    yes_token: "Yes"
+    no_token: "No"
+    batch_size: 16
+    prompts:
+      - text: "Is this image displayed in its natural, correct upright orientation? Answer with only Yes or No."
+        sign: 1.0
+      - text: "Is this image rotated away from its natural upright orientation? Answer with only Yes or No."
+        sign: -1.0
+      - text: "Is the top of the scene at the top of this image? Answer with only Yes or No."
+        sign: 1.0
+    calibrate: true
+    calibration_clip: 0.95
+  siglip:
+    model_name: "google/siglip-large-patch16-384"
+    dtype: "float16"
+    device: "cuda"
+    upright_prompts:
+      - "a natural upright photograph"
+      - "a correctly oriented photo"
+    rotated_prompts:
+      - "a rotated photograph"
+      - "an upside down photo"
+      - "a sideways photo"
+  synthetic:
+    # reward = cos(theta) gives smooth +1 at 0 deg, -1 at 180 deg
+    use_cosine: true
+
+# ------------------------------------------------------------
+# PPO hyper-parameters
+# ------------------------------------------------------------
+ppo:
+  total_updates: 500              # outer PPO iterations
+  ppo_epochs: 4                   # K epochs per rollout
+  minibatch_size: 64              # mini-batches drawn without replacement
+  clip_range: 0.2
+  clip_range_vf: null             # null -> no value clipping
+  vf_coef: 0.5
+  entropy_coef: 0.01
+  max_grad_norm: 0.5
+  gamma: 0.99
+  gae_lambda: 0.95
+  learning_rate: 3.0e-4
+  lr_schedule: "linear"           # linear | constant
+  target_kl: 0.05                 # early-stop epoch if exceeded
+
+# ------------------------------------------------------------
+# Logging / checkpointing
+# ------------------------------------------------------------
+logging:
+  log_every: 1                    # in PPO updates
+  save_every: 25
+  eval_every: 25
+  num_eval_episodes: 8
+  tensorboard: true
+
+# ------------------------------------------------------------
+# Test-time inference (canonicalize an image at test time).
+# Stops once reward delta is below tolerance for `patience` steps.
+# ------------------------------------------------------------
+inference:
+  tolerance: 0.005
+  patience: 50
+  max_steps: 400
+  greedy: true                    # argmax action vs sampling

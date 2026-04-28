@@ -1,0 +1,144 @@
+# ============================================================
+# Free Colab T4 (~15 GB VRAM) config: ~500M-class policy + 2B VLM reward.
+# Memory budget (fp16 reward, fp32 trainable heads):
+#   Qwen2-VL-2B fp16 weights ........ ~4.5 GB
+#   ViT-Huge frozen fp16 weights .... ~1.3 GB
+#   Activations (batch 16) .......... ~3 GB
+#   Heads + Adam states ............. ~0.1 GB
+#   CUDA / misc ..................... ~1 GB
+#   ---------------------------------- ~10 GB / 15 GB  -> OK
+# Free Colab GPU sessions can be ~4 h. total_updates=200 keeps a single
+# run well under that even with the 2B VLM in the rollout loop.
+#
+# Checkpoints are SLIM by default whenever the backbone is frozen --
+# we save only the trainable heads (~5 MB) plus optimizer state,
+# instead of the full 2.5 GB state dict. See `PPOTrainer.save_checkpoint`.
+# At load time the backbone is rebuilt from `policy.backbone` below, so
+# the load is exact (modulo HF revision pinning).
+#
+# Run order in Colab:
+#   1) python scripts/quick_check.py
+#   2) python scripts/train.py --config configs/debug.yaml      # validate PPO loop, ~1 min
+#   3) python scripts/download_data.py --config configs/colab_500m.yaml
+#   4) python scripts/train.py --config configs/colab_500m.yaml
+# ============================================================
+
+experiment:
+  name: "canon_ppo_colab_500m"
+  seed: 42
+  output_dir: "checkpoints"
+  log_dir: "logs"
+
+data:
+  dir: "data/images"
+  hf_dataset: "frgfm/imagenette"
+  hf_config: "full_size"
+  hf_split: "train"
+  num_images: 100
+  image_size: 224
+  init_rot_max: 90.0
+
+action:
+  bound: 5
+  step_size: 1
+
+env:
+  num_envs: 16
+  rollout_steps: 24            # 16 envs * 24 steps = 384 transitions / rollout
+  max_episode_steps: 48
+  early_terminate:
+    enabled: true
+    reward_threshold: 0.85
+    consecutive_steps: 6
+  reward_normalization: true
+
+# ------------------------------------------------------------
+# Policy: ~632M-param ViT-Huge backbone (closest open-weights
+# match to "500M"). Backbone is FROZEN -- on free Colab T4 you
+# don't have memory to backprop through 600M+ params alongside
+# a 2B VLM. We train only the actor/critic heads.
+#
+# To swap to literal ~300M with more headroom:
+#   backbone: "facebook/dinov2-large"
+# To swap to a true 500M-ish that's better tuned for objects:
+#   backbone: "facebook/dinov2-large"  +  freeze_backbone: false
+#   (this needs ~22 GB VRAM, NOT free T4 -- use Colab Pro A100.)
+# ------------------------------------------------------------
+policy:
+  backbone: "google/vit-huge-patch14-224-in21k"
+  freeze_backbone: true
+  hidden_dim: 1024
+  dropout: 0.1
+  dtype: "float32"
+
+# ------------------------------------------------------------
+# Reward: Qwen2-VL-2B in fp16. Single forward pass, no generation.
+# We keep batch_size=16 to match num_envs (one VLM call per
+# rollout step, scoring all envs at once).
+# ------------------------------------------------------------
+reward:
+  type: "vlm"
+  vlm:
+    model_name: "Qwen/Qwen2-VL-2B-Instruct"
+    dtype: "float16"
+    device: "cuda"
+    yes_token: "Yes"
+    no_token: "No"
+    batch_size: 16
+    # Multi-prompt ensemble. The inverted prompt (sign: -1.0) cancels
+    # the generic VLM "Yes-bias" because that bias works for us on the
+    # positive prompts and against us on the inverted one; signed avg
+    # cancels.
+    prompts:
+      - text: "Is this image displayed in its natural, correct upright orientation? Answer with only Yes or No."
+        sign: 1.0
+      - text: "Is this image rotated away from its natural upright orientation? Answer with only Yes or No."
+        sign: -1.0
+      - text: "Is the top of the scene at the top of this image? Answer with only Yes or No."
+        sign: 1.0
+    # Per-image bias calibration on the unrotated pool at startup. After
+    # calibration, an upright image scores ~0 (not the VLM's
+    # idiosyncratic upright value), so deviation from 0 cleanly signals
+    # rotation rather than image-specific quirks.
+    calibrate: true
+    calibration_clip: 0.95
+  siglip:
+    model_name: "google/siglip-large-patch16-384"
+    dtype: "float16"
+    device: "cuda"
+    upright_prompts: ["a natural upright photograph", "a correctly oriented photo"]
+    rotated_prompts: ["a rotated photograph", "an upside down photo", "a sideways photo"]
+  synthetic:
+    use_cosine: true
+
+# ------------------------------------------------------------
+# PPO. total_updates=200 to fit in a free Colab GPU session.
+# Bump to 500 if you have Colab Pro / Gilbreth.
+# ------------------------------------------------------------
+ppo:
+  total_updates: 200
+  ppo_epochs: 2          # was 4 -- fewer passes over noisy rollout data
+  minibatch_size: 64
+  clip_range: 0.15       # was 0.2 -- tighter ratio clip
+  clip_range_vf: null
+  vf_coef: 0.5
+  entropy_coef: 0.005    # was 0.01 -- exploit weak signal more, explore less
+  max_grad_norm: 0.5
+  gamma: 0.99
+  gae_lambda: 0.95
+  learning_rate: 5.0e-5  # was 3.0e-4 -- low LR for noisy VLM reward
+  lr_schedule: "linear"
+  target_kl: 0.03        # was 0.05 -- stricter trust region
+
+logging:
+  log_every: 1
+  save_every: 10         # was 25 -- save more often (slim ckpts ~50MB)
+  eval_every: 10         # was 25 -- check eval more often
+  num_eval_episodes: 8
+  tensorboard: true
+
+inference:
+  tolerance: 0.005
+  patience: 50
+  max_steps: 200
+  greedy: true

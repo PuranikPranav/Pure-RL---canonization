@@ -1,0 +1,74 @@
+# ============================================================
+# Debug config: tiny + synthetic reward.
+# Use to validate the PPO loop end-to-end without loading a VLM.
+# Should run on a CPU laptop in a few minutes; on GPU in seconds.
+# ============================================================
+
+experiment:
+  name: "canon_ppo_debug"
+  seed: 0
+  output_dir: "checkpoints"
+  log_dir: "logs"
+
+data:
+  dir: "data/images"
+  hf_dataset: "frgfm/imagenette"
+  hf_config: "full_size"
+  hf_split: "train"
+  num_images: 16
+  image_size: 224
+  init_rot_max: 60.0
+
+action:
+  bound: 5
+  step_size: 1
+
+env:
+  num_envs: 4
+  rollout_steps: 16
+  max_episode_steps: 32
+  early_terminate:
+    enabled: true
+    reward_threshold: 0.9
+    consecutive_steps: 4
+  reward_normalization: true
+
+policy:
+  backbone: "facebook/dinov2-small"
+  freeze_backbone: true
+  hidden_dim: 256
+  dropout: 0.1
+  dtype: "float32"
+
+reward:
+  type: "synthetic"
+  synthetic:
+    use_cosine: true
+
+ppo:
+  total_updates: 30
+  ppo_epochs: 4
+  minibatch_size: 16
+  clip_range: 0.2
+  clip_range_vf: null
+  vf_coef: 0.5
+  entropy_coef: 0.01
+  max_grad_norm: 0.5
+  gamma: 0.99
+  gae_lambda: 0.95
+  learning_rate: 3.0e-4
+  lr_schedule: "constant"
+  target_kl: 0.1
+
+logging:
+  log_every: 1
+  save_every: 10
+  eval_every: 10
+  num_eval_episodes: 4
+  tensorboard: false
+
+inference:
+  tolerance: 0.01
+  patience: 20
+  max_steps: 100
+  greedy: true

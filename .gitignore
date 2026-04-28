@@ -1,0 +1,21 @@
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+.env
+
+# Outputs
+checkpoints/
+logs/
+outputs/
+data/images/
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+.ipynb_checkpoints/
+
+# HF cache (in case people run from repo root)
+.cache/

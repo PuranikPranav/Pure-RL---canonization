@@ -1,0 +1,26 @@
+# Core deep learning
+torch>=2.1.0
+torchvision>=0.16.0
+numpy>=1.24.0
+
+# HuggingFace ecosystem (policy backbone + VLM reward + datasets)
+transformers>=4.45.0
+accelerate>=0.30.0
+datasets>=2.18.0
+safetensors>=0.4.0
+huggingface_hub>=0.24.0
+qwen-vl-utils>=0.0.8
+
+# Image / vision utilities
+Pillow>=10.0.0
+opencv-python>=4.8.0
+einops>=0.7.0
+
+# Training / logging
+tqdm>=4.66.0
+pyyaml>=6.0.0
+tensorboard>=2.15.0
+
+# Optional but useful
+matplotlib>=3.7.0
+scipy>=1.11.0
