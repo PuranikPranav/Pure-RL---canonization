@@ -115,10 +115,22 @@ def download_pool_from_hf(
     if hf_config is None and hf_dataset == "frgfm/imagenette":
         hf_config = "full_size"
 
-    if hf_config is None:
-        ds = load_dataset(hf_dataset, split=split, streaming=True)
-    else:
-        ds = load_dataset(hf_dataset, hf_config, split=split, streaming=True)
+    try:
+        if hf_config is None:
+            ds = load_dataset(hf_dataset, split=split, streaming=True)
+        else:
+            ds = load_dataset(hf_dataset, hf_config, split=split, streaming=True)
+    except RuntimeError as e:
+        msg = str(e)
+        if "Dataset scripts are no longer supported" in msg:
+            raise RuntimeError(
+                "This dataset requires the HuggingFace `datasets` 2.x/3.x loader, "
+                "but you currently have `datasets` 4.x installed.\n"
+                "Fix with:\n"
+                "  pip uninstall -y datasets\n"
+                "  pip install \"datasets>=2.18.0,<4.0.0\""
+            ) from e
+        raise
 
     arrays: List[np.ndarray] = []
     saved = 0

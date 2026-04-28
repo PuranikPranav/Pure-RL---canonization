@@ -36,6 +36,23 @@ from PIL import Image
 from .rotation import np_to_pil
 
 
+def _resolve_torch_device(device: str) -> torch.device:
+    dev = (device or "auto").lower()
+    if dev == "auto":
+        if torch.cuda.is_available():
+            return torch.device("cuda")
+        if torch.backends.mps.is_available():
+            return torch.device("mps")
+        return torch.device("cpu")
+    if dev == "cuda":
+        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if dev == "mps":
+        return torch.device("mps" if torch.backends.mps.is_available() else "cpu")
+    if dev == "cpu":
+        return torch.device("cpu")
+    return torch.device("cpu")
+
+
 def _to_pil_list(images) -> List[Image.Image]:
     if isinstance(images, torch.Tensor):
         images = images.detach().cpu().numpy()
@@ -161,7 +178,7 @@ class VLMRewardModel(RewardModel):
     ):
         from transformers import AutoProcessor, Qwen2VLForConditionalGeneration
 
-        self.device = torch.device(device if torch.cuda.is_available() or device == "cpu" else "cpu")
+        self.device = _resolve_torch_device(device)
         torch_dtype = {
             "float16": torch.float16,
             "bfloat16": torch.bfloat16,
@@ -365,7 +382,7 @@ class SigLIPRewardModel(RewardModel):
     ):
         from transformers import AutoModel, AutoProcessor
 
-        self.device = torch.device(device if torch.cuda.is_available() or device == "cpu" else "cpu")
+        self.device = _resolve_torch_device(device)
         torch_dtype = {
             "float16": torch.float16,
             "bfloat16": torch.bfloat16,

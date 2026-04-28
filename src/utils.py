@@ -81,10 +81,17 @@ class RunningMeanStd:
 # Device
 # ---------------------------------------------------------------------------
 
-def get_device(prefer: str = "cuda") -> torch.device:
-    if prefer == "cuda" and torch.cuda.is_available():
+def get_device(prefer: str = "auto") -> torch.device:
+    pref = (prefer or "auto").lower()
+    if pref == "auto":
+        if torch.cuda.is_available():
+            return torch.device("cuda")
+        if torch.backends.mps.is_available():
+            return torch.device("mps")
+        return torch.device("cpu")
+    if pref == "cuda" and torch.cuda.is_available():
         return torch.device("cuda")
-    if prefer == "mps" and torch.backends.mps.is_available():
+    if pref == "mps" and torch.backends.mps.is_available():
         return torch.device("mps")
     return torch.device("cpu")
 

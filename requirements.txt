@@ -5,8 +5,9 @@ numpy>=1.24.0
 
 # HuggingFace ecosystem (policy backbone + VLM reward + datasets)
 transformers>=4.45.0
+sentencepiece>=0.2.0
 accelerate>=0.30.0
-datasets>=2.18.0
+datasets>=2.18.0,<4.0.0
 safetensors>=0.4.0
 huggingface_hub>=0.24.0
 qwen-vl-utils>=0.0.8

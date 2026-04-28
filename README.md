@@ -88,6 +88,41 @@ you can read and modify it.
 pip install -r requirements.txt
 ```
 
+If you hit a `SiglipTokenizer requires the SentencePiece library` error,
+install/update dependencies again (the project requires `sentencepiece`):
+
+```bash
+pip install -r requirements.txt
+```
+
+If you already installed with `datasets` 4.x, pin it back to a compatible
+version (HF removed support for some dataset scripts in 4.x):
+
+```bash
+pip uninstall -y datasets
+pip install "datasets>=2.18.0,<4.0.0"
+```
+
+### Apple Silicon (M4 Pro) setup
+
+Use a clean virtualenv and install PyTorch wheels that support MPS:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+Quick MPS check:
+
+```bash
+python -c "import torch; print('mps_available=', torch.backends.mps.is_available())"
+```
+
+If this prints `True`, the policy network will run on your Mac GPU when
+you pass `--device auto` (now the default for `train.py` and `test.py`).
+
 ### 1. Sanity check (CPU, no model downloads except a tiny DINOv2-small)
 
 ```bash
@@ -118,6 +153,18 @@ under `data/images/`.
 ```bash
 python scripts/train.py --config configs/default.yaml
 ```
+
+On Apple Silicon, `configs/default.yaml` is usually not practical because
+the Qwen2-VL reward path expects CUDA for usable throughput. Instead use:
+
+```bash
+python scripts/train.py --config configs/m4pro.yaml --device auto
+```
+
+This uses a Mac-friendly setup:
+- policy on `mps` when available
+- SigLIP reward model (`float32`, `device: auto`)
+- reduced env/update sizes for laptop thermals/runtime
 
 GPU-only in practice: the 2B Qwen2-VL forward pass is what dominates the
 rollout cost. Total training is `total_updates * num_envs * rollout_steps =

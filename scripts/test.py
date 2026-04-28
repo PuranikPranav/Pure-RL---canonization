@@ -63,7 +63,7 @@ def main() -> None:
     parser.add_argument("--initial_angle", type=float, default=None,
                         help="if set with --image_path, override random init rotation")
     parser.add_argument("--save_trace", type=str, default=None)
-    parser.add_argument("--device", type=str, default="cuda")
+    parser.add_argument("--device", type=str, default="auto")
     args = parser.parse_args()
 
     cfg = load_config(args.config)

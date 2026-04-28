@@ -153,6 +153,7 @@ class PPOTrainer:
             pixel = self._preprocess(obs_np)
             self.policy.eval()
             action, log_prob, value = self.policy.act(pixel, greedy=False)
+            action = action.to(torch.long)
 
             # Reward for the *current* obs (before stepping). Pass image
             # ids when supported so VLMRewardModel can apply per-image
@@ -166,7 +167,8 @@ class PPOTrainer:
                 r = self.reward_model.score(obs_np, angles=angles)
 
             obs_list.append(pixel.cpu())
-            act_list.append(action.cpu())
+            # Keep a detached CPU long copy to avoid backend-specific dtype/copy issues.
+            act_list.append(action.detach().to(torch.long).cpu().clone())
             logp_list.append(log_prob.cpu())
             val_list.append(value.cpu())
             rew_list.append(r)
@@ -275,7 +277,10 @@ class PPOTrainer:
                 mb = idx[start : start + self.minibatch_size]
 
                 px = rollout.pixel_values[mb].to(device, non_blocking=True)
-                a = rollout.actions[mb].to(device, non_blocking=True)
+                # Use blocking transfer + explicit cast on action ids; MPS can be
+                # fragile with non-blocking integer transfers.
+                a = rollout.actions[mb].to(dtype=torch.long).to(device, non_blocking=False)
+                a = a.clamp_(0, self.action_space.n - 1)
                 old_logp = rollout.log_probs[mb].to(device, non_blocking=True)
                 mb_adv = adv[mb].to(device, non_blocking=True)
                 mb_ret = rollout.returns[mb].to(device, non_blocking=True)

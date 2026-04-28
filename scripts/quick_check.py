@@ -73,7 +73,12 @@ def main() -> None:
     assert next_obs.shape == obs.shape
 
     print("[check] policy forward/backward (small backbone, CPU-friendly)...")
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if torch.cuda.is_available():
+        device = torch.device("cuda")
+    elif torch.backends.mps.is_available():
+        device = torch.device("mps")
+    else:
+        device = torch.device("cpu")
     policy = CanonicalizationPolicy(
         backbone_name="facebook/dinov2-small",
         num_actions=aspace.n,

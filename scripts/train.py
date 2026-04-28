@@ -34,7 +34,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=str, default=str(REPO_ROOT / "configs/default.yaml"))
     parser.add_argument("--resume", type=str, default=None)
-    parser.add_argument("--device", type=str, default="cuda")
+    parser.add_argument("--device", type=str, default="auto")
     args = parser.parse_args()
 
     cfg = load_config(args.config)
