@@ -135,6 +135,10 @@ class CanonicalizationPolicy(nn.Module):
         feat = self.encode(pixel_values)
         logits = self.actor(feat)
         value = self.critic(feat).squeeze(-1)
+        # Numerical guardrails: keep policy/value outputs finite on all backends.
+        logits = torch.nan_to_num(logits, nan=0.0, posinf=30.0, neginf=-30.0)
+        logits = logits.clamp(-30.0, 30.0)
+        value = torch.nan_to_num(value, nan=0.0, posinf=1e3, neginf=-1e3)
         return logits, value
 
     # ---------------------------------------------------------------- API

@@ -254,9 +254,10 @@ class PPOTrainer:
     def update(self, rollout: Rollout) -> Dict[str, float]:
         """Run K epochs of mini-batch PPO updates."""
         device = self.device
+        non_blocking = device.type != "mps"
         n = len(rollout)
         # Per-batch advantage normalization (PPO standard practice).
-        adv = rollout.advantages
+        adv = torch.nan_to_num(rollout.advantages, nan=0.0, posinf=0.0, neginf=0.0)
         adv = (adv - adv.mean()) / (adv.std() + 1e-8)
 
         idx = np.arange(n)
@@ -276,19 +277,26 @@ class PPOTrainer:
             for start in range(0, n, self.minibatch_size):
                 mb = idx[start : start + self.minibatch_size]
 
-                px = rollout.pixel_values[mb].to(device, non_blocking=True)
+                px = rollout.pixel_values[mb].to(device, non_blocking=non_blocking)
                 # Use blocking transfer + explicit cast on action ids; MPS can be
                 # fragile with non-blocking integer transfers.
                 a = rollout.actions[mb].to(dtype=torch.long).to(device, non_blocking=False)
                 a = a.clamp_(0, self.action_space.n - 1)
-                old_logp = rollout.log_probs[mb].to(device, non_blocking=True)
-                mb_adv = adv[mb].to(device, non_blocking=True)
-                mb_ret = rollout.returns[mb].to(device, non_blocking=True)
-                old_val = rollout.values[mb].to(device, non_blocking=True)
+                old_logp = rollout.log_probs[mb].to(device, non_blocking=non_blocking)
+                mb_adv = adv[mb].to(device, non_blocking=non_blocking)
+                mb_ret = rollout.returns[mb].to(device, non_blocking=non_blocking)
+                old_val = rollout.values[mb].to(device, non_blocking=non_blocking)
+                old_logp = torch.nan_to_num(old_logp, nan=0.0, posinf=0.0, neginf=0.0)
+                mb_adv = torch.nan_to_num(mb_adv, nan=0.0, posinf=0.0, neginf=0.0)
+                mb_ret = torch.nan_to_num(mb_ret, nan=0.0, posinf=0.0, neginf=0.0)
+                old_val = torch.nan_to_num(old_val, nan=0.0, posinf=0.0, neginf=0.0)
 
                 new_logp, entropy, value = self.policy.evaluate_actions(px, a)
+                if not (torch.isfinite(new_logp).all() and torch.isfinite(value).all()):
+                    continue
 
-                ratio = torch.exp(new_logp - old_logp)
+                log_ratio = (new_logp - old_logp).clamp(-20.0, 20.0)
+                ratio = torch.exp(log_ratio)
                 surr1 = ratio * mb_adv
                 surr2 = torch.clamp(ratio, 1 - self.clip_range, 1 + self.clip_range) * mb_adv
                 policy_loss = -torch.min(surr1, surr2).mean()
@@ -303,6 +311,8 @@ class PPOTrainer:
 
                 entropy_loss = -entropy.mean()
                 loss = policy_loss + self.vf_coef * value_loss + self.entropy_coef * entropy_loss
+                if not torch.isfinite(loss):
+                    continue
 
                 self.optimizer.zero_grad(set_to_none=True)
                 loss.backward()
@@ -310,10 +320,17 @@ class PPOTrainer:
                     [p for p in self.policy.parameters() if p.requires_grad],
                     self.max_grad_norm,
                 )
+                grads_finite = True
+                for p in self.policy.parameters():
+                    if p.requires_grad and p.grad is not None and not torch.isfinite(p.grad).all():
+                        grads_finite = False
+                        break
+                if not grads_finite:
+                    self.optimizer.zero_grad(set_to_none=True)
+                    continue
                 self.optimizer.step()
 
                 with torch.no_grad():
-                    log_ratio = new_logp - old_logp
                     approx_kl = ((torch.exp(log_ratio) - 1) - log_ratio).mean().item()
                     clip_frac = (torch.abs(ratio - 1) > self.clip_range).float().mean().item()
                     var_y = mb_ret.var().item() + 1e-8
