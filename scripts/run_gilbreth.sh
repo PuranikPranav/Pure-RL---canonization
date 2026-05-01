@@ -56,11 +56,18 @@ module load external           # exposes anaconda/cuda hierarchy on Gilbreth
 module load "$ANACONDA_MOD"
 module load "$CUDA_MOD"
 
-source "$(conda info --base)/etc/profile.d/conda.sh"
-conda activate "$CONDA_ENV"
-
-# Restore HF / torch caches set up on the login node.
+# Restore caches set up by setup_gilbreth.sh (HF / torch / conda / pip).
+# This MUST come before `conda activate` so CONDA_ENVS_DIRS is correct.
 [ -f "$HOME/.canon_env" ] && source "$HOME/.canon_env"
+
+source "$(conda info --base)/etc/profile.d/conda.sh"
+# Prefer the scratch-prefix env; fall back to the named env for compat.
+ENV_PREFIX="${CONDA_ENVS_DIRS:-$HOME/.conda/envs}/$CONDA_ENV"
+if [ -x "$ENV_PREFIX/bin/python" ]; then
+    conda activate "$ENV_PREFIX"
+else
+    conda activate "$CONDA_ENV"
+fi
 
 echo "[run] node          = $(hostname)"
 echo "[run] gpu           = $(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null || echo NONE)"

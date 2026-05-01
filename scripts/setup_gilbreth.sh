@@ -49,16 +49,22 @@ module load external
 module load "$ANACONDA_MOD"
 module load "$CUDA_MOD"
 
-# ---- HF cache on scratch ----------------------------------------------
+# ---- HF + conda + pip caches on scratch -------------------------------
 # Gilbreth exposes scratch as $CLUSTER_SCRATCH; older docs use $RCAC_SCRATCH;
-# fall back to $HOME/scratch on machines that have neither.
+# fall back to $HOME/scratch on machines that have neither. We move *every*
+# heavyweight cache here because $HOME has a tight quota (~25-100 GB) and
+# torch + Qwen2-VL alone are ~8 GB.
 SCRATCH_DIR="${CLUSTER_SCRATCH:-${RCAC_SCRATCH:-$HOME/scratch}}"
-mkdir -p "$SCRATCH_DIR/hf_cache"
-mkdir -p "$SCRATCH_DIR/torch_cache"
+mkdir -p "$SCRATCH_DIR/hf_cache" "$SCRATCH_DIR/torch_cache"
+mkdir -p "$SCRATCH_DIR/conda_envs" "$SCRATCH_DIR/conda_pkgs" "$SCRATCH_DIR/pip_cache"
+
 export HF_HOME="$SCRATCH_DIR/hf_cache"
 export HUGGINGFACE_HUB_CACHE="$HF_HOME/hub"
 export TRANSFORMERS_CACHE="$HF_HOME/transformers"
 export TORCH_HOME="$SCRATCH_DIR/torch_cache"
+export CONDA_ENVS_DIRS="$SCRATCH_DIR/conda_envs"
+export CONDA_PKGS_DIRS="$SCRATCH_DIR/conda_pkgs"
+export PIP_CACHE_DIR="$SCRATCH_DIR/pip_cache"
 
 # Persist these so SBATCH jobs see them too.
 ENV_FILE="$HOME/.canon_env"
@@ -67,24 +73,40 @@ export HF_HOME="$HF_HOME"
 export HUGGINGFACE_HUB_CACHE="$HUGGINGFACE_HUB_CACHE"
 export TRANSFORMERS_CACHE="$TRANSFORMERS_CACHE"
 export TORCH_HOME="$TORCH_HOME"
+export CONDA_ENVS_DIRS="$CONDA_ENVS_DIRS"
+export CONDA_PKGS_DIRS="$CONDA_PKGS_DIRS"
+export PIP_CACHE_DIR="$PIP_CACHE_DIR"
 EOF
-echo "[setup] HF/Torch caches at $SCRATCH_DIR (saved to $ENV_FILE)"
+echo "[setup] all caches relocated to $SCRATCH_DIR (saved to $ENV_FILE)"
 
-# ---- Conda env ---------------------------------------------------------
-if ! conda env list | awk '{print $1}' | grep -qx "$CONDA_ENV"; then
-    echo "[setup] creating conda env '$CONDA_ENV' (python $PY_VERSION)"
-    conda create -y -n "$CONDA_ENV" "python=$PY_VERSION"
+# ---- Conda env (force-create on scratch) -------------------------------
+ENV_PREFIX="$CONDA_ENVS_DIRS/$CONDA_ENV"
+
+# If a previous attempt landed an env in $HOME (default ~/.conda/envs/...),
+# nuke it -- it's almost certainly broken from a quota-exceeded install.
+HOME_ENV_DIR="$HOME/.conda/envs/$CONDA_ENV"
+HOME_ENV_DIR_NESTED="$HOME/.conda/envs/2024.10-py312/$CONDA_ENV"
+for d in "$HOME_ENV_DIR" "$HOME_ENV_DIR_NESTED"; do
+    if [ -d "$d" ]; then
+        echo "[setup] removing busted env in \$HOME: $d"
+        rm -rf "$d"
+    fi
+done
+
+if [ ! -d "$ENV_PREFIX" ] || [ ! -x "$ENV_PREFIX/bin/python" ]; then
+    echo "[setup] creating conda env at $ENV_PREFIX (python $PY_VERSION)"
+    rm -rf "$ENV_PREFIX"   # in case a partial dir is hanging around
+    conda create -y --prefix "$ENV_PREFIX" "python=$PY_VERSION"
 else
-    echo "[setup] conda env '$CONDA_ENV' already exists"
+    echo "[setup] conda env at $ENV_PREFIX already exists"
 fi
 
 # Activate
-# (use eval-based activation since we are not in an interactive shell init)
 source "$(conda info --base)/etc/profile.d/conda.sh"
-conda activate "$CONDA_ENV"
+conda activate "$ENV_PREFIX"
 
 # ---- Pip install -------------------------------------------------------
-echo "[setup] pip install -r requirements.txt"
+echo "[setup] pip install -r requirements.txt (cache=$PIP_CACHE_DIR)"
 pip install --upgrade pip
 pip install -r requirements.txt
 
