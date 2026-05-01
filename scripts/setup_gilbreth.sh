@@ -41,7 +41,9 @@ module load "$ANACONDA_MOD"
 module load "$CUDA_MOD"
 
 # ---- HF cache on scratch ----------------------------------------------
-SCRATCH_DIR="${RCAC_SCRATCH:-$HOME/scratch}"
+# Gilbreth exposes scratch as $CLUSTER_SCRATCH; older docs use $RCAC_SCRATCH;
+# fall back to $HOME/scratch on machines that have neither.
+SCRATCH_DIR="${CLUSTER_SCRATCH:-${RCAC_SCRATCH:-$HOME/scratch}}"
 mkdir -p "$SCRATCH_DIR/hf_cache"
 mkdir -p "$SCRATCH_DIR/torch_cache"
 export HF_HOME="$SCRATCH_DIR/hf_cache"

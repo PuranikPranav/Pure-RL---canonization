@@ -381,7 +381,10 @@ Two scripts handle the full workflow end-to-end:
 
 ```bash
 ssh <user>@gilbreth.rcac.purdue.edu
-cd /scratch/gilbreth/<user>/canon_ppo        # or wherever you cloned
+cd $CLUSTER_SCRATCH                           # Gilbreth's scratch env var
+git clone -b Original-Pure-RL-codebase \
+    https://github.com/PuranikPranav/Pure-RL---canonization.git canon_ppo
+cd canon_ppo
 bash scripts/setup_gilbreth.sh
 ```
 
