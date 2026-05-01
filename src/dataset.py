@@ -1,10 +1,8 @@
 """Image dataset for canonicalization.
 
 The dataset is intentionally tiny (default 100 images) and held entirely
-in memory as preprocessed numpy arrays of shape ``(N, image_size,
-image_size, 3)`` uint8. This keeps the rollout loop completely free of
-disk I/O -- each rollout step we simply reach into the array, rotate by
-the current angle, and feed the result through the policy + reward.
+in memory as preprocessed numpy arrays of shape (N, image_size,
+image_size, 3) uint8.
 """
 
 from __future__ import annotations
@@ -85,7 +83,6 @@ def load_pool_from_dir(
 # ---------------------------------------------------------------------------
 # Loading from a HuggingFace dataset (used by scripts/download_data.py)
 # ---------------------------------------------------------------------------
-
 def download_pool_from_hf(
     hf_dataset: str,
     split: str,
@@ -95,16 +92,7 @@ def download_pool_from_hf(
     seed: int = 0,
     hf_config: str | None = None,
 ) -> ImagePool:
-    """Stream ``num_images`` from a HF dataset, save to ``out_dir``, return pool.
-
-    We stream rather than fully download to keep things light. Most HF
-    image datasets work with this pattern; we tested with
-    ``frgfm/imagenette`` (clean object photos, free).
-
-    Some datasets (e.g. ``frgfm/imagenette``) require a ``hf_config`` such as
-    ``'full_size'`` / ``'320px'`` / ``'160px'``. If left ``None``, we default
-    to ``'full_size'`` for ``frgfm/imagenette`` and otherwise pass ``None``.
-    """
+    """Stream num_images from a HF dataset with shuffling, save to out_dir, return pool."""
     from datasets import load_dataset  # local import: heavy
 
     out_dir = Path(out_dir)
@@ -112,58 +100,66 @@ def download_pool_from_hf(
 
     rng = random.Random(seed)
 
-    if hf_config is None and hf_dataset == "frgfm/imagenette":
-        hf_config = "full_size"
+    # Automatic config fallback
+    def _attempt_load(conf):
+        try:
+            # We add streaming=True to keep memory low
+            return load_dataset(hf_dataset, conf, split=split, streaming=True)
+        except Exception:
+            return None
 
-    try:
-        if hf_config is None:
-            ds = load_dataset(hf_dataset, split=split, streaming=True)
-        else:
-            ds = load_dataset(hf_dataset, hf_config, split=split, streaming=True)
-    except RuntimeError as e:
-        msg = str(e)
-        if "Dataset scripts are no longer supported" in msg:
-            raise RuntimeError(
-                "This dataset requires the HuggingFace `datasets` 2.x/3.x loader, "
-                "but you currently have `datasets` 4.x installed.\n"
-                "Fix with:\n"
-                "  pip uninstall -y datasets\n"
-                "  pip install \"datasets>=2.18.0,<4.0.0\""
-            ) from e
-        raise
+    ds = None
+    if hf_config is not None:
+        ds = _attempt_load(hf_config)
+    
+    if ds is None:
+        for trial_conf in ["full_size", "default", None]:
+            ds = _attempt_load(trial_conf)
+            if ds is not None:
+                print(f"[dataset] Loaded {hf_dataset} with config: {trial_conf}")
+                break
+
+    if ds is None:
+        raise RuntimeError(f"Could not load dataset {hf_dataset}. Check the name/config.")
+
+    # --- THE FIX: SHUFFLE THE STREAM ---
+    # buffer_size=1000 means it holds 1000 images in a buffer and picks randomly.
+    # This prevents getting 200 "zeros" in a row.
+    ds = ds.shuffle(seed=seed, buffer_size=5000)
 
     arrays: List[np.ndarray] = []
     saved = 0
+    
+    print(f"[dataset] Sampling {num_images} shuffled images from {hf_dataset}...")
+    
     for example in ds:
         img = _extract_pil(example)
         if img is None:
             continue
+            
         img = square_resize(img.convert("RGB"), image_size)
         arr = pil_to_np(img)
         arrays.append(arr)
-        img.save(out_dir / f"img_{saved:04d}.jpg", quality=95)
+        
+        # Enhanced prefix: Includes the label if it exists so you can verify diversity
+        label = example.get("label", "unknown")
+        prefix = hf_dataset.replace("/", "_")
+        img.save(out_dir / f"{prefix}_class{label}_{saved:04d}.jpg", quality=95)
+        
         saved += 1
         if saved >= num_images:
             break
 
     if saved == 0:
-        raise RuntimeError(
-            f"Could not extract any images from {hf_dataset}:{split}"
-        )
-    if saved < num_images:
-        print(
-            f"[dataset] WARNING: only got {saved}/{num_images} images from "
-            f"{hf_dataset}:{split}"
-        )
-    # Light shuffle so the pool isn't all in dataset order
+        raise RuntimeError(f"Could not extract any images from {hf_dataset}")
+
+    # Final shuffle of the in-memory pool
     idx = list(range(saved))
     rng.shuffle(idx)
     arr_stack = np.stack([arrays[i] for i in idx], axis=0)
     return ImagePool(arr_stack)
 
-
 def _extract_pil(example: dict) -> Image.Image | None:
-    """HF datasets store images under a few different key names."""
     for key in ("image", "img", "picture", "jpg"):
         if key in example and example[key] is not None:
             v = example[key]
@@ -174,3 +170,33 @@ def _extract_pil(example: dict) -> Image.Image | None:
             except Exception:
                 continue
     return None
+def download_combined_pool(
+    dataset_configs: List[dict],
+    split: str,
+    image_size: int,
+    out_dir: str | os.PathLike,
+    seed: int = 0
+) -> ImagePool:
+    """Combines multiple HF datasets into one memory pool."""
+    all_arrays = []
+    for i, d_cfg in enumerate(dataset_configs):
+        # We call the single-download function for each item in the list
+        pool = download_pool_from_hf(
+            hf_dataset=d_cfg['name'],
+            split=split,
+            num_images=int(d_cfg['num']),
+            image_size=image_size,
+            out_dir=out_dir,
+            seed=seed + i,
+            hf_config=d_cfg.get('config')
+        )
+        all_arrays.append(pool.images)
+    
+    # Merge all images into one big numpy stack
+    combined_stack = np.concatenate(all_arrays, axis=0)
+    
+    # Final shuffle so the datasets are interleaved (Chars, CIFAR, Chars...)
+    rng = np.random.default_rng(seed)
+    rng.shuffle(combined_stack)
+    
+    return ImagePool(combined_stack)

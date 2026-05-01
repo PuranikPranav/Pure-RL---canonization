@@ -22,7 +22,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 import torch  # noqa: E402
 
-from src.dataset import load_pool_from_dir, download_pool_from_hf  # noqa: E402
+from src.dataset import load_pool_from_dir, download_pool_from_hf, download_combined_pool  # noqa: E402
 from src.env import ActionSpace, CanonicalizationEnv  # noqa: E402
 from src.policy import CanonicalizationPolicy, ImageEncoderPreprocessor  # noqa: E402
 from src.ppo import PPOTrainer  # noqa: E402
@@ -51,26 +51,25 @@ def main() -> None:
     print(f"[train] device={device}")
 
     # ---- Data ----------------------------------------------------------
+# Inside main() in train.py:
     data_cfg = cfg["data"]
-    data_dir = Path(data_cfg["dir"])
-    if not data_dir.exists() or len(list(data_dir.glob("*.*"))) < data_cfg["num_images"]:
-        print(f"[train] downloading {data_cfg['num_images']} images to {data_dir}")
-        pool = download_pool_from_hf(
-            hf_dataset=data_cfg["hf_dataset"],
-            split=data_cfg["hf_split"],
-            num_images=data_cfg["num_images"],
-            image_size=data_cfg["image_size"],
-            out_dir=data_dir,
-            seed=cfg["experiment"]["seed"],
-            hf_config=data_cfg.get("hf_config"),
-        )
-    else:
-        pool = load_pool_from_dir(
-            data_dir,
-            image_size=data_cfg["image_size"],
-            max_images=data_cfg["num_images"],
-        )
-    print(f"[train] image pool: {len(pool)} x {pool.image_size}^2")
+    
+    # Split your total requested images between the two datasets
+    half_count = data_cfg["num_images"] // 2
+    
+    my_datasets = [
+        {"name": "Asteriks/chars74k-eng-good", "num": half_count},
+        {"name": "cifar10", "num": half_count}
+    ]
+
+    # Call the fixed function with the clean variables
+    pool = download_combined_pool(
+        dataset_configs=my_datasets,
+        split="train",
+        image_size=data_cfg["image_size"],
+        out_dir=data_cfg["dir"],
+        seed=cfg["experiment"]["seed"]
+    )
 
     # ---- Env -----------------------------------------------------------
     action_space = ActionSpace(
@@ -90,7 +89,12 @@ def main() -> None:
         seed=cfg["experiment"]["seed"],
     )
     print(f"[train] env: num_envs={env.num_envs} action_n={action_space.n}")
-
+    if action_space.n <= 1:
+        print("WARNING: Action space too small! Forcing action_n calculation.")
+        # This is a fallback if the class properties are failing
+        action_n = (cfg["action"]["bound"] * 2) + 1
+    else:
+        action_n = action_space.n
     # ---- Policy --------------------------------------------------------
     pol_cfg = cfg["policy"]
     policy = CanonicalizationPolicy(

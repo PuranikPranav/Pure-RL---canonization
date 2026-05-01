@@ -1,0 +1,80 @@
+experiment:
+  name: "ppo_char74k_cifar10"
+  seed: 42
+  output_dir: "checkpoints"
+  log_dir: "logs"
+
+data:
+  dir: "data/images"
+  hf_dataset: "Asteriks/chars74k-eng-good"
+  hf_dataset_alt: "cifar10"        
+  hf_config: "default"
+  hf_split: "train"
+  num_images: 2000
+  image_size: 224
+  init_rot_max: 90.0
+
+action:
+  bound: 5
+  step_size: 1
+
+env:
+  num_envs: 8
+  rollout_steps: 24
+  max_episode_steps: 64
+  early_terminate:
+    enabled: true
+    reward_threshold: 0.85
+    consecutive_steps: 6
+  reward_normalization: true
+
+policy:
+  backbone: "facebook/dinov2-small"
+  freeze_backbone: true
+  hidden_dim: 256
+  dropout: 0.1
+  dtype: "float32"
+
+reward:
+  # On Apple Silicon, use SigLIP as a practical reward oracle.
+  # Qwen2-VL-2B is generally too slow on CPU and not CUDA-available on Mac.
+  type: "siglip"
+  siglip:
+    model_name: "google/siglip-large-patch16-384"
+    dtype: "float32"
+    device: "auto"
+    upright_prompts:
+      - "a natural upright photograph"
+      - "a correctly oriented photo"
+    rotated_prompts:
+      - "a rotated photograph"
+      - "an upside down photo"
+      - "a sideways photo"
+
+ppo:
+  total_updates: 2000
+  ppo_epochs: 4
+  minibatch_size: 32
+  clip_range: 0.2
+  clip_range_vf: null
+  vf_coef: 0.5
+  entropy_coef: 0.05
+  max_grad_norm: 0.5
+  gamma: 0.99
+  gae_lambda: 0.95
+  learning_rate: 5.0e-5
+  lr_schedule: "linear"
+  target_kl: 0.08
+
+logging:
+  log_every: 1
+  save_every: 20
+  eval_every: 20
+  num_eval_episodes: 8
+  tensorboard: true
+
+inference:
+  tolerance: 0.005
+  patience: 40
+  max_steps: 300
+  greedy: true
