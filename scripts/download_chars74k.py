@@ -78,7 +78,7 @@ def _gdown_or_explain(url: str, dest: Path) -> None:
         sys.exit(1)
 
     print(f"[chars74k] downloading -> {dest}")
-    gdown.download(url=url, output=str(dest), quiet=False, fuzzy=True)
+    gdown.download(url=url, output=str(dest), quiet=False)
 
 
 def _extract_pngs(tarball: Path, extract_dir: Path) -> List[Path]:
