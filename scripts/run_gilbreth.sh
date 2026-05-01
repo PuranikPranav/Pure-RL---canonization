@@ -46,8 +46,8 @@ cd "$PROJECT_ROOT"
 mkdir -p slurm_logs results/plots checkpoints logs
 
 # ---- Modules + env (mirrors setup_gilbreth.sh) ----------------------
-ANACONDA_MOD="${ANACONDA_MOD:-anaconda}"
-CUDA_MOD="${CUDA_MOD:-cuda/12.1}"
+ANACONDA_MOD="${ANACONDA_MOD:-anaconda/2024.10-py312}"
+CUDA_MOD="${CUDA_MOD:-cuda/12.1.1}"
 CONDA_ENV="${CONDA_ENV:-canon}"
 CONFIG="${CANON_CONFIG:-configs/combined.yaml}"
 

@@ -28,9 +28,14 @@ set -euo pipefail
 
 # ---- Tunable knobs -----------------------------------------------------
 CONDA_ENV="${CONDA_ENV:-canon}"
-PY_VERSION="${PY_VERSION:-3.11}"
-ANACONDA_MOD="${ANACONDA_MOD:-anaconda}"
-CUDA_MOD="${CUDA_MOD:-cuda/12.1}"
+PY_VERSION="${PY_VERSION:-3.12}"
+# Gilbreth (May 2026) exposes:
+#   anaconda/2024.10-py312, anaconda/2025.06-py313
+#   cuda/12.1.1, cuda/12.6.0, cuda/13.1.0
+# We pin python 3.12 + cuda 12.1.1 because PyTorch's default GPU wheels
+# match this combo and Python 3.13 still lacks wheels for some HF deps.
+ANACONDA_MOD="${ANACONDA_MOD:-anaconda/2024.10-py312}"
+CUDA_MOD="${CUDA_MOD:-cuda/12.1.1}"
 CHARS74K_SUBSET="${CHARS74K_SUBSET:-fnt}"
 CHARS74K_MAX="${CHARS74K_MAX:-200}"
 
