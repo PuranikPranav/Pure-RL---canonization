@@ -31,11 +31,15 @@
 #SBATCH --gres=gpu:1
 #SBATCH --mem=48G
 #SBATCH --time=06:00:00
-# Gilbreth `liu334` allocation -- 2x A100-40GB. Override at submit time
-# with e.g. `sbatch --account=foo --partition=foo scripts/run_gilbreth.sh`
-# if you want to use a different queue.
+# Gilbreth buy-in allocation. ``liu334`` from ``slist`` is your *account*
+# (who pays for the GPU hours), NOT the partition name. The partition is
+# which queue you submit into -- on Gilbreth the common GPU queue is
+# ``gpu``. Override either at submit time:
+#
+#     sbatch --account=OTHER --partition=OTHER scripts/run_gilbreth.sh
+#
 #SBATCH --account=liu334
-#SBATCH --partition=liu334
+#SBATCH --partition=gpu
 
 set -euo pipefail
 

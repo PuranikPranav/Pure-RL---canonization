@@ -398,8 +398,18 @@ sbatch scripts/run_gilbreth.sh
 ```
 
 Default SBATCH header in the script: 1 GPU, 8 CPUs, 48 GB RAM, 6 hours.
-**Edit `--account=` and `--partition=` in the header** to match your
-allocation before the first submission.
+
+**Account vs partition (common Gilbreth confusion):** the first column
+of ``slist`` (e.g. ``liu334``) is your **Slurm account** -- who is billed
+for the job. The **partition** is which queue you submit into; on
+Gilbreth the usual GPU queue is ``gpu``. If ``sbatch`` complains about an
+invalid partition, run ``sinfo -s`` or ``slist`` and pick a valid
+``PARTITION`` name, then either edit the two ``#SBATCH`` lines in
+``scripts/run_gilbreth.sh`` or override at submit time:
+
+```bash
+sbatch --account=liu334 --partition=gpu scripts/run_gilbreth.sh
+```
 
 To run a subset of phases (each is its own SLURM job):
 

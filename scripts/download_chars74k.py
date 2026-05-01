@@ -48,10 +48,12 @@ will skip the download step.
 from __future__ import annotations
 
 import argparse
+import inspect
 import random
 import shutil
 import sys
 import tarfile
+import time
 from pathlib import Path
 from typing import List
 
@@ -85,14 +87,50 @@ def _extract_pngs(tarball: Path, extract_dir: Path) -> List[Path]:
     """Extract a Chars74K tarball and return the list of character PNGs."""
     extract_dir.mkdir(parents=True, exist_ok=True)
     print(f"[chars74k] extracting {tarball} -> {extract_dir}")
+    t0 = time.time()
     with tarfile.open(tarball) as tf:
-        tf.extractall(extract_dir)
+        members = tf.getmembers()
+        n = len(members)
+        print(f"[chars74k]   tarball contains {n} members; unpacking ...")
 
-    candidates = [
-        p for p in extract_dir.rglob("*.png")
-        if "mask" not in p.name.lower()
-        and "binary" not in p.name.lower()
-    ]
+        # ``TarFile.extract`` gained a ``filter=`` kwarg in Python 3.12.
+        # Use the safe ``data`` filter when available to silence the 3.14
+        # deprecation warning from ``extractall``.
+        extract_kw: dict = {}
+        if "filter" in inspect.signature(tf.extract).parameters:
+            extract_kw["filter"] = "data"
+
+        extracted = 0
+        for i, m in enumerate(members, start=1):
+            if m.isdir():
+                continue
+            tf.extract(m, path=extract_dir, **extract_kw)
+            extracted += 1
+            if extracted % 5000 == 0 or i == n:
+                elapsed = time.time() - t0
+                print(
+                    f"[chars74k]   processed {i}/{n} members, "
+                    f"extracted {extracted} files ({elapsed:.1f}s elapsed)"
+                )
+
+    print(f"[chars74k]   scan for *.png under {extract_dir} ...")
+    t1 = time.time()
+    candidates: List[Path] = []
+    scanned = 0
+    for p in extract_dir.rglob("*.png"):
+        scanned += 1
+        if "mask" in p.name.lower() or "binary" in p.name.lower():
+            continue
+        candidates.append(p)
+        if scanned % 10000 == 0:
+            print(
+                f"[chars74k]   scanned {scanned} png paths, "
+                f"kept {len(candidates)} so far ({time.time()-t1:.1f}s)"
+            )
+    print(
+        f"[chars74k]   scan done: {scanned} paths, {len(candidates)} usable PNGs "
+        f"in {time.time()-t1:.1f}s"
+    )
     return sorted(candidates)
 
 
