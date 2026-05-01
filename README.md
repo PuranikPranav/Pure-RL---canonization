@@ -397,7 +397,8 @@ Re-running it is safe (skips steps that are already done).
 sbatch scripts/run_gilbreth.sh
 ```
 
-Default SBATCH header in the script: 1 GPU, 8 CPUs, 48 GB RAM, 6 hours.
+Default SBATCH header in the script: 1 GPU, **20 CPUs** (Gilbreth
+``gpu`` partition rule: ~20 CPUs per GPU), 48 GB RAM, 6 hours.
 
 **Account vs partition (common Gilbreth confusion):** the first column
 of ``slist`` (e.g. ``liu334``) is your **Slurm account** -- who is billed

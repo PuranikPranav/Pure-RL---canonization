@@ -27,7 +27,11 @@
 #SBATCH --error=slurm_logs/%x-%j.err
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=8
+# Gilbreth ``gpu`` partition: 3 GPUs / 64 cores per node -> Slurm enforces
+# ~20 CPUs per GPU requested. With ``--gres=gpu:1`` you must ask for 20
+# CPUs or submission fails with:
+#   "you should request 20 CPUs per GPU you request"
+#SBATCH --cpus-per-task=20
 #SBATCH --gres=gpu:1
 #SBATCH --mem=48G
 #SBATCH --time=06:00:00
