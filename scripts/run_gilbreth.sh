@@ -27,23 +27,30 @@
 #SBATCH --error=slurm_logs/%x-%j.err
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-# Gilbreth ``gpu`` partition: 3 GPUs / 64 cores per node -> Slurm enforces
-# ~20 CPUs per GPU requested. With ``--gres=gpu:1`` you must ask for 20
-# CPUs or submission fails with:
-#   "you should request 20 CPUs per GPU you request"
-#SBATCH --cpus-per-task=20
-#SBATCH --gres=gpu:1
-#SBATCH --mem=48G
+# Gilbreth GPU partitions are named by *hardware*, e.g. ``a100-40gb``,
+# ``a100-80gb``, ``a30``, ``a10`` -- there is **no** generic ``gpu``
+# partition. Your ``slist`` output shows A100-40GB resources, so we
+# default to that partition. Override at submit time if needed:
+#
+#     sbatch --partition=a100-80gb scripts/run_gilbreth.sh
+#
+# CPU / memory: follow RCAC's Gilbreth GPU job template (see their
+# "Gilbreth User Guide: Queues" page). The old ``gpu`` partition on
+# some clusters wanted ~20 CPUs per GPU -- that rule does **not** apply
+# here once you are on the correct hardware partition.
+#SBATCH --cpus-per-task=4
+#SBATCH --gpus-per-task=1
+#SBATCH --mem=50G
 #SBATCH --time=06:00:00
 # Gilbreth buy-in allocation. ``liu334`` from ``slist`` is your *account*
 # (who pays for the GPU hours), NOT the partition name. The partition is
-# which queue you submit into -- on Gilbreth the common GPU queue is
-# ``gpu``. Override either at submit time:
+# which *hardware* queue you submit into (``a100-40gb``, ``a30``, etc.).
+# Override either at submit time:
 #
 #     sbatch --account=OTHER --partition=OTHER scripts/run_gilbreth.sh
 #
 #SBATCH --account=liu334
-#SBATCH --partition=gpu
+#SBATCH --partition=a100-40gb
 
 set -euo pipefail
 

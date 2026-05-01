@@ -397,19 +397,21 @@ Re-running it is safe (skips steps that are already done).
 sbatch scripts/run_gilbreth.sh
 ```
 
-Default SBATCH header in the script: 1 GPU, **20 CPUs** (Gilbreth
-``gpu`` partition rule: ~20 CPUs per GPU), 48 GB RAM, 6 hours.
+Default SBATCH header in the script: 1 GPU, **4 CPUs**, **50 GB** RAM,
+6 hours, on the ``a100-40gb`` partition (see RCAC's *Gilbreth User Guide:
+Queues* for the full list: ``a100-40gb``, ``a100-80gb``, ``a30``, ``a10``,
+``v100``, etc.). There is **no** generic ``gpu`` partition on Gilbreth.
 
 **Account vs partition (common Gilbreth confusion):** the first column
 of ``slist`` (e.g. ``liu334``) is your **Slurm account** -- who is billed
-for the job. The **partition** is which queue you submit into; on
-Gilbreth the usual GPU queue is ``gpu``. If ``sbatch`` complains about an
-invalid partition, run ``sinfo -s`` or ``slist`` and pick a valid
-``PARTITION`` name, then either edit the two ``#SBATCH`` lines in
-``scripts/run_gilbreth.sh`` or override at submit time:
+for the job. The **partition** is which *hardware* queue you submit into
+(e.g. ``a100-40gb``). If ``sbatch`` complains about an invalid partition,
+run ``sinfo -s`` or ``slist`` and pick a valid ``PARTITION`` name, then
+either edit the two ``#SBATCH`` lines in ``scripts/run_gilbreth.sh`` or
+override at submit time:
 
 ```bash
-sbatch --account=liu334 --partition=gpu scripts/run_gilbreth.sh
+sbatch --account=liu334 --partition=a100-40gb scripts/run_gilbreth.sh
 ```
 
 To run a subset of phases (each is its own SLURM job):
