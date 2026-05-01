@@ -52,6 +52,7 @@ CONDA_ENV="${CONDA_ENV:-canon}"
 CONFIG="${CANON_CONFIG:-configs/combined.yaml}"
 
 module --force purge >/dev/null 2>&1 || true
+module load external           # exposes anaconda/cuda hierarchy on Gilbreth
 module load "$ANACONDA_MOD"
 module load "$CUDA_MOD"
 

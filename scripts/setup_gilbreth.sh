@@ -40,8 +40,12 @@ CHARS74K_SUBSET="${CHARS74K_SUBSET:-fnt}"
 CHARS74K_MAX="${CHARS74K_MAX:-200}"
 
 # ---- Modules -----------------------------------------------------------
-echo "[setup] loading modules: $ANACONDA_MOD $CUDA_MOD"
+# Gilbreth keeps anaconda and cuda inside the `external` Lmod hierarchy,
+# so we need to load that meta-module before the actual ones become
+# visible. ``module load external`` is idempotent.
+echo "[setup] loading modules: external $ANACONDA_MOD $CUDA_MOD"
 module --force purge >/dev/null 2>&1 || true
+module load external
 module load "$ANACONDA_MOD"
 module load "$CUDA_MOD"
 
