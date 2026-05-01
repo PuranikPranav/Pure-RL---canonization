@@ -56,15 +56,17 @@ module load external           # exposes anaconda/cuda hierarchy on Gilbreth
 module load "$ANACONDA_MOD"
 module load "$CUDA_MOD"
 
-# Restore caches set up by setup_gilbreth.sh (HF / torch / conda / pip).
-# This MUST come before `conda activate` so CONDA_ENVS_DIRS is correct.
+# Restore caches + conda env path from setup_gilbreth.sh.
 [ -f "$HOME/.canon_env" ] && source "$HOME/.canon_env"
+unset CONDA_ENVS_DIRS
 
 source "$(conda info --base)/etc/profile.d/conda.sh"
-# Prefer the scratch-prefix env; fall back to the named env for compat.
-ENV_PREFIX="${CONDA_ENVS_DIRS:-$HOME/.conda/envs}/$CONDA_ENV"
-if [ -x "$ENV_PREFIX/bin/python" ]; then
-    conda activate "$ENV_PREFIX"
+if [ -n "${CANON_ENV_PREFIX:-}" ] && [ -x "$CANON_ENV_PREFIX/bin/python" ]; then
+    conda activate "$CANON_ENV_PREFIX"
+elif [ -n "${CANON_ENV_PREFIX:-}" ]; then
+    echo "[run] ERROR: CANON_ENV_PREFIX=$CANON_ENV_PREFIX exists but has no python."
+    echo "[run]        Re-run:  bash scripts/setup_gilbreth.sh"
+    exit 1
 else
     conda activate "$CONDA_ENV"
 fi

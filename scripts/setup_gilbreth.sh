@@ -49,6 +49,9 @@ module load external
 module load "$ANACONDA_MOD"
 module load "$CUDA_MOD"
 
+# Never let a stale CONDA_ENVS_DIRS from the shell collide with ~/.condarc.
+unset CONDA_ENVS_DIRS
+
 # ---- HF + conda + pip caches on scratch -------------------------------
 # Gilbreth exposes scratch as $CLUSTER_SCRATCH; older docs use $RCAC_SCRATCH;
 # fall back to $HOME/scratch on machines that have neither. We move *every*
@@ -62,26 +65,34 @@ export HF_HOME="$SCRATCH_DIR/hf_cache"
 export HUGGINGFACE_HUB_CACHE="$HF_HOME/hub"
 export TRANSFORMERS_CACHE="$HF_HOME/transformers"
 export TORCH_HOME="$SCRATCH_DIR/torch_cache"
-export CONDA_ENVS_DIRS="$SCRATCH_DIR/conda_envs"
 export CONDA_PKGS_DIRS="$SCRATCH_DIR/conda_pkgs"
 export PIP_CACHE_DIR="$SCRATCH_DIR/pip_cache"
+
+# Absolute path to the conda env we will create on scratch. We use
+# ``conda create --prefix`` instead of ``conda create -n`` so nothing
+# ever lands in \$HOME, and we deliberately do *not* set
+# ``CONDA_ENVS_DIRS`` -- that env var collides with ``envs_path`` /
+# ``envs_dirs`` keys in some users' ~/.condarc and triggers
+# ``MultipleKeysError`` on Gilbreth.
+ENV_PREFIX="$SCRATCH_DIR/conda_envs/$CONDA_ENV"
 
 # Persist these so SBATCH jobs see them too.
 ENV_FILE="$HOME/.canon_env"
 cat > "$ENV_FILE" <<EOF
+# Drop any stale env-var from a previous attempt that could confuse conda.
+unset CONDA_ENVS_DIRS
+
 export HF_HOME="$HF_HOME"
 export HUGGINGFACE_HUB_CACHE="$HUGGINGFACE_HUB_CACHE"
 export TRANSFORMERS_CACHE="$TRANSFORMERS_CACHE"
 export TORCH_HOME="$TORCH_HOME"
-export CONDA_ENVS_DIRS="$CONDA_ENVS_DIRS"
 export CONDA_PKGS_DIRS="$CONDA_PKGS_DIRS"
 export PIP_CACHE_DIR="$PIP_CACHE_DIR"
+export CANON_ENV_PREFIX="$ENV_PREFIX"
 EOF
 echo "[setup] all caches relocated to $SCRATCH_DIR (saved to $ENV_FILE)"
 
 # ---- Conda env (force-create on scratch) -------------------------------
-ENV_PREFIX="$CONDA_ENVS_DIRS/$CONDA_ENV"
-
 # If a previous attempt landed an env in $HOME (default ~/.conda/envs/...),
 # nuke it -- it's almost certainly broken from a quota-exceeded install.
 HOME_ENV_DIR="$HOME/.conda/envs/$CONDA_ENV"
