@@ -20,7 +20,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
-from src.dataset import download_pool_from_hf  # noqa: E402
+from src.dataset import build_combined_pool, download_pool_from_hf  # noqa: E402
 from src.utils import load_config  # noqa: E402
 
 
@@ -32,8 +32,21 @@ def main() -> None:
 
     cfg = load_config(args.config)
     data_cfg = cfg["data"]
-    out_dir = Path(data_cfg["dir"])
 
+    if data_cfg.get("combined"):
+        cache_dir = Path(data_cfg.get("dir", "data"))
+        print(f"[download] resolving combined pool with {len(data_cfg['combined'])} sources -> {cache_dir}")
+        pool = build_combined_pool(
+            specs=data_cfg["combined"],
+            image_size=data_cfg["image_size"],
+            base_dir=cache_dir,
+            seed=cfg["experiment"]["seed"],
+            shuffle=True,
+        )
+        print(f"[download] combined pool ready: {len(pool)} x {pool.image_size}^2")
+        return
+
+    out_dir = Path(data_cfg["dir"])
     existing = list(out_dir.glob("*.jp*g")) + list(out_dir.glob("*.png")) if out_dir.exists() else []
     if not args.force and len(existing) >= data_cfg["num_images"]:
         print(f"[download] {len(existing)} images already in {out_dir}; skipping (use --force to redo)")

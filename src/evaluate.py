@@ -46,16 +46,26 @@ def canonicalize(
     patience: int = 50,
     max_steps: int = 400,
     greedy: bool = True,
+    reward_threshold: float | None = None,
+    threshold_patience: int = 5,
 ) -> List[CanonicalizationTrajectory]:
     """Run policy on all envs until convergence or ``max_steps``.
 
-    Convergence per env: |reward_t - reward_{t-1}| < ``tolerance`` for
-    ``patience`` consecutive steps.
+    Two stopping criteria, applied per env (whichever fires first):
+
+    1. **Reward-delta convergence.** ``|r_t - r_{t-1}| < tolerance`` for
+       ``patience`` consecutive steps -- the user's "score doesn't change
+       between iterations" criterion.
+    2. **Reward threshold (optional).** ``r_t >= reward_threshold`` for
+       ``threshold_patience`` consecutive steps -- a "the image is
+       upright enough, stop" criterion. Disabled when ``reward_threshold``
+       is ``None``.
     """
     n = env.num_envs
     trajectories = [CanonicalizationTrajectory() for _ in range(n)]
     last_reward = np.full(n, np.nan, dtype=np.float32)
-    patience_counter = np.zeros(n, dtype=np.int32)
+    delta_counter = np.zeros(n, dtype=np.int32)
+    high_counter = np.zeros(n, dtype=np.int32)
     converged = np.zeros(n, dtype=bool)
 
     policy.eval()
@@ -79,14 +89,24 @@ def canonicalize(
             trajectories[i].rewards.append(float(rewards[i]))
             trajectories[i].actions.append(int(action[i].item()))
 
-        # Convergence check
+        # Convergence checks
         if t > 0:
             delta = np.abs(rewards - last_reward)
-            patience_counter = np.where(delta < tolerance, patience_counter + 1, 0)
-            newly_converged = (patience_counter >= patience) & (~converged)
-            for i in np.where(newly_converged)[0]:
-                converged[i] = True
-                trajectories[i].converged_at = t
+            delta_counter = np.where(delta < tolerance, delta_counter + 1, 0)
+            delta_done = delta_counter >= patience
+        else:
+            delta_done = np.zeros(n, dtype=bool)
+
+        if reward_threshold is not None:
+            high_counter = np.where(rewards >= reward_threshold, high_counter + 1, 0)
+            threshold_done = high_counter >= threshold_patience
+        else:
+            threshold_done = np.zeros(n, dtype=bool)
+
+        newly_converged = (delta_done | threshold_done) & (~converged)
+        for i in np.where(newly_converged)[0]:
+            converged[i] = True
+            trajectories[i].converged_at = t
         last_reward = rewards
 
         if converged.all():

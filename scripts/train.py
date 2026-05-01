@@ -22,7 +22,11 @@ sys.path.insert(0, str(REPO_ROOT))
 
 import torch  # noqa: E402
 
-from src.dataset import load_pool_from_dir, download_pool_from_hf  # noqa: E402
+from src.dataset import (  # noqa: E402
+    build_combined_pool,
+    download_pool_from_hf,
+    load_pool_from_dir,
+)
 from src.env import ActionSpace, CanonicalizationEnv  # noqa: E402
 from src.policy import CanonicalizationPolicy, ImageEncoderPreprocessor  # noqa: E402
 from src.ppo import PPOTrainer  # noqa: E402
@@ -52,24 +56,36 @@ def main() -> None:
 
     # ---- Data ----------------------------------------------------------
     data_cfg = cfg["data"]
-    data_dir = Path(data_cfg["dir"])
-    if not data_dir.exists() or len(list(data_dir.glob("*.*"))) < data_cfg["num_images"]:
-        print(f"[train] downloading {data_cfg['num_images']} images to {data_dir}")
-        pool = download_pool_from_hf(
-            hf_dataset=data_cfg["hf_dataset"],
-            split=data_cfg["hf_split"],
-            num_images=data_cfg["num_images"],
+    if data_cfg.get("combined"):
+        # Combined multi-source dataset (e.g. CIFAR + Chars74K).
+        cache_dir = Path(data_cfg.get("dir", "data"))
+        print(f"[train] building combined pool with {len(data_cfg['combined'])} sources")
+        pool = build_combined_pool(
+            specs=data_cfg["combined"],
             image_size=data_cfg["image_size"],
-            out_dir=data_dir,
+            base_dir=cache_dir,
             seed=cfg["experiment"]["seed"],
-            hf_config=data_cfg.get("hf_config"),
+            shuffle=True,
         )
     else:
-        pool = load_pool_from_dir(
-            data_dir,
-            image_size=data_cfg["image_size"],
-            max_images=data_cfg["num_images"],
-        )
+        data_dir = Path(data_cfg["dir"])
+        if not data_dir.exists() or len(list(data_dir.glob("*.*"))) < data_cfg["num_images"]:
+            print(f"[train] downloading {data_cfg['num_images']} images to {data_dir}")
+            pool = download_pool_from_hf(
+                hf_dataset=data_cfg["hf_dataset"],
+                split=data_cfg["hf_split"],
+                num_images=data_cfg["num_images"],
+                image_size=data_cfg["image_size"],
+                out_dir=data_dir,
+                seed=cfg["experiment"]["seed"],
+                hf_config=data_cfg.get("hf_config"),
+            )
+        else:
+            pool = load_pool_from_dir(
+                data_dir,
+                image_size=data_cfg["image_size"],
+                max_images=data_cfg["num_images"],
+            )
     print(f"[train] image pool: {len(pool)} x {pool.image_size}^2")
 
     # ---- Env -----------------------------------------------------------

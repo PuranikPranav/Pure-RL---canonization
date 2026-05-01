@@ -114,6 +114,11 @@ ppo:
   learning_rate: 3.0e-4
   lr_schedule: "linear"           # linear | constant
   target_kl: 0.05                 # early-stop epoch if exceeded
+  # Training-time reward shaping (see configs/combined.yaml for docs).
+  shaping:
+    cos_alpha: 0.10               # smooth global gradient, fights tanh saturation
+    progress_beta: 0.05           # direction-aware per-step bonus
+    vlm_score_every: 1            # >1 to amortize the VLM cost
 
 # ------------------------------------------------------------
 # Logging / checkpointing

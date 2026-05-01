@@ -9,7 +9,11 @@ __pycache__/
 checkpoints/
 logs/
 outputs/
-data/images/
+results/
+slurm_logs/
+
+# Cached data (any sub-source: cifar10/, chars74k/, EMNIST/, images/, ...)
+data/
 
 # Editor / OS
 .DS_Store

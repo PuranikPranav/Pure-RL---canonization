@@ -129,6 +129,13 @@ ppo:
   learning_rate: 5.0e-5  # was 3.0e-4 -- low LR for noisy VLM reward
   lr_schedule: "linear"
   target_kl: 0.03        # was 0.05 -- stricter trust region
+  # Reward shaping. We score the 2B VLM only every other step on free
+  # T4 to keep rollouts fast; cos+progress shaping then provides
+  # signal at the cached steps too.
+  shaping:
+    cos_alpha: 0.10
+    progress_beta: 0.05
+    vlm_score_every: 2
 
 logging:
   log_every: 1

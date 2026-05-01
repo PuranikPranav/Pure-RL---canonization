@@ -41,23 +41,27 @@ preference structure into a much smaller model.
 ```
 .
 ├── configs/
-│   ├── default.yaml          # full run with VLM reward
+│   ├── default.yaml          # full run with VLM reward (imagenette)
+│   ├── combined.yaml         # CIFAR-10 + Chars74K-style combined pool
+│   ├── colab_500m.yaml       # ~500M policy class for free Colab T4
 │   └── debug.yaml            # tiny, synthetic reward, CPU-friendly
 ├── src/
 │   ├── rotation.py           # smart reflect-padded rotation
-│   ├── dataset.py            # in-memory image pool, HF auto-download
+│   ├── dataset.py            # image pool: HF + torchvision + dir + combined
 │   ├── env.py                # vectorized canonicalization environment
 │   ├── policy.py             # actor-critic w/ DINOv2 backbone
-│   ├── reward_model.py       # VLM / SigLIP / synthetic
+│   ├── reward_model.py       # VLM / SigLIP / synthetic (training oracle)
+│   ├── baselines.py          # CNN regressor + small-VLM baselines
 │   ├── ppo.py                # PPO trainer (GAE, clipping, K epochs)
 │   ├── evaluate.py           # convergence-based test-time loop
 │   └── utils.py              # config, seeding, running stats, logging
 ├── scripts/
-│   ├── download_data.py      # download 100 imagenette images
-│   ├── train.py              # entry point
+│   ├── download_data.py      # resolve a single or combined data spec
+│   ├── train.py              # PPO training entry point
+│   ├── train_baseline_cnn.py # train the SL CNN rotation regressor
 │   ├── test.py               # canonicalize at inference time
+│   ├── compare_baselines.py  # PPO vs small-VLM vs CNN vs random
 │   └── quick_check.py        # local sanity test (no VLM, no GPU needed)
-├── notebooks/colab_setup.ipynb
 ├── requirements.txt
 └── README.md
 ```
@@ -156,6 +160,182 @@ The test loop iterates the policy until `|r_t - r_{t-1}| < tolerance`
 for `patience=50` consecutive steps -- exactly your "reward score
 between two consecutive iterations is less than tolerance" criterion.
 
+## Combined-dataset experiment (CIFAR-10 + Chars74K)
+
+`configs/combined.yaml` builds a concatenated, shuffled pool of two
+sources:
+
+| Source | Default | Why |
+| ------ | ------- | --- |
+| CIFAR-10 (torchvision) | 100 imgs | Natural objects, well-defined upright. |
+| **Chars74K** (`data/chars74k/`) | 100 imgs | English alphanumeric characters with a clear upright orientation. Default `fnt` subset = computer-rendered fonts (every image guaranteed upright). |
+
+### One-time setup: fetch Chars74K
+
+Chars74K is **not** on Hugging Face -- the canonical source is Google
+Drive links on the [author's page](https://teodecampos.github.io/chars74k/).
+We provide a script that downloads, unpacks and flattens it into
+`data/chars74k/`:
+
+```bash
+pip install gdown
+python scripts/download_chars74k.py --subset fnt --max_images 200
+```
+
+Subset choices (English script, 62 classes 0-9 / A-Z / a-z):
+
+| `--subset` | Size  | Imgs | Notes |
+| ---------- | ----- | ---- | ----- |
+| `fnt`      | 51 MB | 63K  | **Default.** Computer fonts -- guaranteed upright -> cleanest reward. |
+| `img`      | 128 MB | 7.7K | Natural-scene crops -- closest to the published benchmark spirit, but some characters in the source photos are naturally tilted, which adds reward noise. |
+| `hnd`      | 13 MB | 3.4K | Tablet handwriting -- always upright. |
+
+If Google Drive blocks `gdown` (quota), download the tarball yourself
+from the author's page and re-run with `--tarball /path/to/EnglishFnt.tgz`.
+
+### Run the experiment
+
+```bash
+python scripts/download_chars74k.py --subset fnt --max_images 200      # one-time
+python scripts/probe_reward.py     --config configs/combined.yaml      # 30s sanity
+python scripts/download_data.py    --config configs/combined.yaml
+python scripts/train.py            --config configs/combined.yaml
+```
+
+The PPO loop is unchanged: at every step the env re-renders the original
+image at the current cumulative angle (reflect-padded), the big VLM scores
+it, the policy picks a ±5° action, the rotated image is the next state.
+
+If `download_chars74k.py` is unavailable for any reason, swap the second
+entry of `data.combined` to the torchvision EMNIST stand-in (instructions
+inside `configs/combined.yaml`); training still works, just with noisier
+reward on the character half of the pool.
+
+## Reward shaping (training-time only)
+
+The raw VLM reward `tanh(logit_yes − logit_no)` has two weaknesses for
+PPO: it **saturates** near upright (tanh) so the late-stage gradient is
+flat, and it is **direction-blind** (a reward of −0.4 doesn't say
+"rotate clockwise"). We add two zero-cost auxiliary terms during
+training, both controlled by `ppo.shaping` in the YAML:
+
+```yaml
+ppo:
+  shaping:
+    cos_alpha: 0.10        # adds α · cos(angle) -- smooth global gradient
+    progress_beta: 0.05    # adds β · max(0, |angle_{t-1}| - |angle_t|)
+    vlm_score_every: 1     # >1 to reuse cached VLM score across N steps
+```
+
+* `cos_alpha` gives a **smooth, monotonic gradient** that is non-zero
+  even when the VLM tanh saturates -- the policy keeps getting useful
+  signal in the last few degrees.
+* `progress_beta` rewards every step that **reduces** `|angle|`. This is
+  direction-aware in a way the VLM scalar isn't, and it discourages
+  oscillation (rotate +5, then -5, then +5, ...).
+* `vlm_score_every: 2` halves the rollout VLM cost at the price of a
+  little staleness; the cos/progress terms supply signal at the cached
+  steps too.
+
+**At test time (`scripts/test.py` and `scripts/compare_baselines.py`),
+shaping is OFF by construction** -- only the raw VLM reward (and the
+delta / threshold stop) is used. Shaping is an *accelerator* for
+training, not a part of the deployed canonicalizer.
+
+The dashboard now decomposes the reward each update so you can see the
+contributions:
+
+```
+[PPO update    37]
+    reward     mean=+0.241  std=0.310  max=+0.93  min=-0.55
+    shaping    vlm=+0.184  cos=+0.046  progress=+0.011
+    angle      first=42.6  mean=21.3  final=8.4   progress=+34.2 deg
+    ...
+```
+
+## Sanity-probe the reward (run before training)
+
+If the reward model is silently broken on your image pool (e.g. the VLM
+is OOD on tiny upscaled characters), training will look fine on losses
+but the policy will not converge. Run a 30-second probe first:
+
+```bash
+python scripts/probe_reward.py --config configs/combined.yaml \
+    --num_images 8 --angles 0,15,30,45,60,90,120,150,180
+```
+
+Output is a per-image table of (angle → reward) and an aggregate health
+verdict (`GOOD` / `OK` / `POOR`) based on:
+
+* **monotonicity** -- how often does reward decrease as `|angle|` grows?
+* **peak_at_0deg_rate** -- does the maximum reward occur at upright?
+
+If the verdict is `POOR`, the script prints concrete remedies (raise
+`cos_alpha`, switch reward type, drop OOD subsets, or use real
+Chars74K via `source: dir`).
+
+## Test-time stopping criteria
+
+`src/evaluate.canonicalize` supports two stopping rules per env:
+
+1. **Reward delta** -- `|r_t − r_{t−1}| < tolerance` for `patience`
+   consecutive steps. The "score doesn't change between iterations"
+   criterion from the spec.
+2. **Reward threshold** (optional) -- `r_t ≥ reward_threshold` for
+   `threshold_patience` consecutive steps. The "the image is upright
+   enough, stop" criterion. Set `reward_threshold: null` to disable.
+
+Both live in `inference:` in the config; either can fire and stop the env.
+
+## Baselines & comparison
+
+We compare the trained PPO against three same-size baselines plus a
+control. All four implement the same `canonicalize(image, init_angle)`
+API (see `src/baselines.py`) so the harness can score them identically.
+
+| Baseline | Type | Approx params | What it tests |
+| -------- | ---- | ------------- | ------------- |
+| `vlm_bruteforce` | Small VLM (CLIP-base / SigLIP-base) scored across an angle grid | ~150M | Could a similar-size, *off-the-shelf* VLM solve this without learning, given enough compute at test time? |
+| `vlm_iterative` | Same VLM, used as 1-step-lookahead policy | ~150M | Same as above but in PPO's loop shape -- isolates the contribution of training. |
+| `cnn` | ResNet-18 SL regressor on `(cos θ, sin θ)` | ~11M | Classic SL baseline. Reflect padding is meant to defeat it -- this validates the RL hypothesis. |
+| `random` | Uniformly random actions | 0 | Sanity floor. |
+
+**Train the CNN baseline** on the same pool:
+
+```bash
+python scripts/train_baseline_cnn.py \
+    --config configs/combined.yaml \
+    --epochs 30 \
+    --output checkpoints/baseline_cnn/cnn.pt
+```
+
+**Run the full comparison** on a fixed test set (deterministic seed):
+
+```bash
+python scripts/compare_baselines.py \
+    --config configs/combined.yaml \
+    --ppo_checkpoint checkpoints/canon_ppo_combined/policy_final.pt \
+    --cnn_checkpoint checkpoints/baseline_cnn/cnn.pt \
+    --small_vlm openai/clip-vit-base-patch16 \
+    --num_images 32 --num_inits 4 \
+    --output_json compare_results.json
+```
+
+Output is a single table, e.g.:
+
+```
+method          | n  | abs_angle_err_mean | abs_angle_err_median | convergence_rate_5deg | judge_reward_mean | steps_mean | wall_seconds
+ppo             | 128 |       3.4          |        2.0            |        0.84            |      +0.62        |   18.2     |   31.1
+vlm_bruteforce  | 128 |       6.1          |        4.0            |        0.66            |      +0.41        |    1.0     |   88.4
+vlm_iterative   | 128 |       7.9          |        5.0            |        0.55            |      +0.33        |   42.8     |  154.0
+cnn             | 128 |      18.5          |       16.7            |        0.21            |      -0.04        |    1.0     |    2.4
+random          | 128 |      55.2          |       60.1            |        0.04            |      -0.18        |   64.0     |    0.3
+```
+
+Hypothesis: PPO wins on `abs_angle_err_mean` and `convergence_rate_5deg`
+*at deployment cost no greater than the small VLM's*, because all the
+oracle compute was paid during training.
+
 ## Sizing the "policy = 25% of VLM" experiment
 
 Default reward model: `Qwen/Qwen2-VL-2B-Instruct` (~2.2B params).
@@ -190,22 +370,69 @@ HF `AutoModel` works as the backbone -- only `_infer_feat_dim` matters.
 
 ## Running on the Purdue Gilbreth cluster
 
-A minimal SLURM script outline (adjust account/partition):
+Two scripts handle the full workflow end-to-end:
+
+| Script | Where to run | What it does |
+| ------ | ------------ | ------------ |
+| `scripts/setup_gilbreth.sh` | **Login node**, interactively, ONCE | Loads `anaconda` + `cuda` modules, creates conda env `canon`, pip-installs deps, redirects HF / Torch caches to `$RCAC_SCRATCH` (saved to `~/.canon_env`), pre-fetches Chars74K + CIFAR-10, runs `quick_check.py`. |
+| `scripts/run_gilbreth.sh`   | Submitted via `sbatch`              | Full pipeline: probe -> data -> train PPO -> train CNN baseline -> compare -> plot. Each phase is idempotent and re-runnable individually. |
+
+### One-time setup
 
 ```bash
-#!/bin/bash
-#SBATCH -N 1
-#SBATCH -n 1
-#SBATCH --gres=gpu:a100:1
-#SBATCH -t 04:00:00
-#SBATCH --mem=64G
-#SBATCH -J canon_ppo
+ssh <user>@gilbreth.rcac.purdue.edu
+cd /scratch/gilbreth/<user>/canon_ppo        # or wherever you cloned
+bash scripts/setup_gilbreth.sh
+```
 
-module load cuda anaconda
-source activate canon
+This takes ~10-15 minutes (mostly pip install + Chars74K download).
+Re-running it is safe (skips steps that are already done).
 
-python scripts/download_data.py --config configs/default.yaml
-python scripts/train.py --config configs/default.yaml
+### Submit a full training run
+
+```bash
+sbatch scripts/run_gilbreth.sh
+```
+
+Default SBATCH header in the script: 1 GPU, 8 CPUs, 48 GB RAM, 6 hours.
+**Edit `--account=` and `--partition=` in the header** to match your
+allocation before the first submission.
+
+To run a subset of phases (each is its own SLURM job):
+
+```bash
+sbatch scripts/run_gilbreth.sh probe      # ~30 sec sanity probe
+sbatch scripts/run_gilbreth.sh train      # PPO only
+sbatch scripts/run_gilbreth.sh cnn        # CNN baseline only
+sbatch scripts/run_gilbreth.sh compare    # comparison only (needs ckpts)
+sbatch scripts/run_gilbreth.sh plot       # regenerate plots
+```
+
+Override the config without editing the script:
+
+```bash
+sbatch --export=ALL,CANON_CONFIG=configs/colab_500m.yaml scripts/run_gilbreth.sh train
+```
+
+### Outputs
+
+After a successful run, everything you need for the report lives in
+`results/`:
+
+```
+results/
+├── probe_reward.txt          # reward-model health summary
+├── compare_results.json      # PPO vs all baselines, machine-readable
+└── plots/
+    ├── training_curves.png   # reward decomp, angle, PPO health, eval
+    ├── comparison_bars.png   # one bar plot per metric, PPO highlighted
+    └── comparison_table.csv  # same numbers, paste into a table
+```
+
+`scp` them off Gilbreth for your write-up:
+
+```bash
+scp -r <user>@gilbreth.rcac.purdue.edu:/scratch/gilbreth/<user>/canon_ppo/results ./local_results
 ```
 
 The code is single-GPU; multi-GPU is straightforward to bolt on with

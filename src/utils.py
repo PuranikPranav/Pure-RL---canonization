@@ -184,6 +184,11 @@ class Logger:
                 f"  min={g(metrics, 'rollout/reward_min'):+.2f}"
             ),
             (
+                f"    shaping    vlm={g(metrics, 'rollout/r_vlm_mean'):+.3f}"
+                f"  cos={g(metrics, 'rollout/r_cos_mean'):+.3f}"
+                f"  progress={g(metrics, 'rollout/r_progress_mean'):+.3f}"
+            ),
+            (
                 f"    angle      first={g(metrics, 'rollout/abs_angle_first'):.1f}"
                 f"  mean={g(metrics, 'rollout/abs_angle_mean'):.1f}"
                 f"  final={g(metrics, 'rollout/abs_angle_final'):.1f}"

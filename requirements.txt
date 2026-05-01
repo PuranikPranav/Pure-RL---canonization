@@ -24,3 +24,6 @@ tensorboard>=2.15.0
 # Optional but useful
 matplotlib>=3.7.0
 scipy>=1.11.0
+
+# Chars74K downloader (Google Drive)
+gdown>=5.2.0

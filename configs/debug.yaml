@@ -59,6 +59,12 @@ ppo:
   learning_rate: 3.0e-4
   lr_schedule: "constant"
   target_kl: 0.1
+  # Debug uses the synthetic oracle, so shaping is unnecessary; keep
+  # a slot here so debug.yaml + production configs share schema.
+  shaping:
+    cos_alpha: 0.0
+    progress_beta: 0.0
+    vlm_score_every: 1
 
 logging:
   log_every: 1

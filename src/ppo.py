@@ -105,6 +105,20 @@ class PPOTrainer:
         self.gae_lambda = float(ppo_cfg["gae_lambda"])
         self.target_kl = ppo_cfg.get("target_kl")
 
+        # ----- Reward shaping (training-time only) ----------------------
+        # The raw VLM reward saturates near upright (tanh) and is direction-
+        # blind. We add two cheap auxiliary terms during *training only*:
+        #   * cos_alpha   : alpha * cos(angle) -- smooth global gradient
+        #   * progress    : beta  * max(0, |angle_{t-1}| - |angle_t|) -- per
+        #                   step progress bonus, direction-aware.
+        # We also let the user *cache* the VLM score across N consecutive
+        # steps (vlm_score_every>1), trading a little freshness for a big
+        # cost reduction (the VLM is the rollout bottleneck).
+        shaping = (ppo_cfg.get("shaping") or {})
+        self.cos_alpha = float(shaping.get("cos_alpha", 0.0))
+        self.progress_beta = float(shaping.get("progress_beta", 0.0))
+        self.vlm_score_every = max(1, int(shaping.get("vlm_score_every", 1)))
+
         self.normalize_returns = bool(cfg["env"].get("reward_normalization", True))
         self.return_rms = RunningMeanStd()
 
@@ -135,47 +149,94 @@ class PPOTrainer:
 
     @torch.no_grad()
     def collect_rollout(self) -> Rollout:
-        """Run ``rollout_steps`` env-steps across all envs."""
+        """Run ``rollout_steps`` env-steps across all envs.
+
+        Reward composition (per env, per step):
+
+            r_t = r_vlm_t + cos_alpha * cos(angle_t)
+                          + progress_beta * max(0, |angle_{t-1}| - |angle_t|)
+
+        Both shaping coefficients default to 0 (i.e. raw VLM reward), and
+        ``vlm_score_every>1`` lets the trainer skip VLM forward passes
+        between scoring steps (cached score reused), trading freshness
+        for compute. At test time we always score every step (see
+        ``src/evaluate.py``).
+        """
         T, N = self.rollout_steps, self.num_envs
 
         obs_list: List[torch.Tensor] = []   # T x (N, 3, H, W)
         act_list: List[torch.Tensor] = []   # T x (N,)
         logp_list: List[torch.Tensor] = []  # T x (N,)
         val_list: List[torch.Tensor] = []   # T x (N,)
-        rew_list: List[np.ndarray] = []     # T x (N,)
+        rew_list: List[np.ndarray] = []     # T x (N,) -- total reward (PPO uses this)
+        vlm_list: List[np.ndarray] = []     # T x (N,) -- raw VLM reward, for logging
+        cos_list: List[np.ndarray] = []     # T x (N,) -- cos shaping term, for logging
+        prog_list: List[np.ndarray] = []    # T x (N,) -- progress shaping term, for logging
         done_list: List[np.ndarray] = []    # T x (N,)
         ang_list: List[np.ndarray] = []     # T x (N,)
 
         obs_np = self.env.observe()                                 # (N,H,W,3) u8
-        last_reward: Optional[np.ndarray] = None
+        prev_abs_ang = np.full(N, np.nan, dtype=np.float32)
+        cached_vlm_r: Optional[np.ndarray] = None
 
         for t in range(T):
             pixel = self._preprocess(obs_np)
             self.policy.eval()
             action, log_prob, value = self.policy.act(pixel, greedy=False)
 
-            # Reward for the *current* obs (before stepping). Pass image
-            # ids when supported so VLMRewardModel can apply per-image
-            # bias calibration; fall back gracefully for SyntheticReward
-            # / SigLIP which don't accept that kwarg.
             angles = self.env.current_angles()
-            try:
-                image_ids = self.env.current_image_ids()
-                r = self.reward_model.score(obs_np, angles=angles, image_ids=image_ids)
-            except TypeError:
-                r = self.reward_model.score(obs_np, angles=angles)
+            abs_ang = np.abs(angles).astype(np.float32)
+
+            # --- VLM reward (possibly cached across steps) ----------------
+            score_now = (cached_vlm_r is None) or (t % self.vlm_score_every == 0)
+            if score_now:
+                try:
+                    image_ids = self.env.current_image_ids()
+                    r_vlm = self.reward_model.score(
+                        obs_np, angles=angles, image_ids=image_ids
+                    )
+                except TypeError:
+                    r_vlm = self.reward_model.score(obs_np, angles=angles)
+                cached_vlm_r = r_vlm
+            else:
+                r_vlm = cached_vlm_r
+            r_vlm = np.asarray(r_vlm, dtype=np.float32)
+
+            # --- Shaping ---------------------------------------------------
+            if self.cos_alpha > 0.0:
+                cos_term = (
+                    self.cos_alpha * np.cos(np.deg2rad(angles))
+                ).astype(np.float32)
+            else:
+                cos_term = np.zeros(N, dtype=np.float32)
+
+            if self.progress_beta > 0.0:
+                valid = ~np.isnan(prev_abs_ang)
+                progress = np.where(
+                    valid, np.maximum(0.0, prev_abs_ang - abs_ang), 0.0
+                ).astype(np.float32)
+                prog_term = self.progress_beta * progress
+            else:
+                prog_term = np.zeros(N, dtype=np.float32)
+
+            r = r_vlm + cos_term + prog_term
 
             obs_list.append(pixel.cpu())
             act_list.append(action.cpu())
             logp_list.append(log_prob.cpu())
             val_list.append(value.cpu())
             rew_list.append(r)
+            vlm_list.append(r_vlm)
+            cos_list.append(cos_term)
+            prog_list.append(prog_term)
             ang_list.append(angles)
 
             next_obs_np, done, _ = self.env.step(action.cpu().numpy(), reward=r)
             done_list.append(done.copy())
             obs_np = next_obs_np
-            last_reward = r
+
+            # Reset progress tracking for envs that just got a fresh image.
+            prev_abs_ang = np.where(done, np.nan, abs_ang).astype(np.float32)
 
         # Bootstrap value for the last obs (after final step).
         with torch.no_grad():
@@ -228,6 +289,9 @@ class PPOTrainer:
         adv_for_log = advantages
         ret_for_log = returns
         ang_arr = np.stack(ang_list)
+        vlm_arr = np.stack(vlm_list)
+        cos_arr = np.stack(cos_list)
+        prog_arr = np.stack(prog_list)
         ang_first = np.mean(np.abs(ang_arr[0]))
         ang_final = np.mean(np.abs(ang_arr[-1]))
         self._last_rollout_metrics = {
@@ -235,6 +299,10 @@ class PPOTrainer:
             "rollout/reward_max": float(rewards.max().item()),
             "rollout/reward_min": float(rewards.min().item()),
             "rollout/reward_std": float(rewards.std().item()),
+            # Shaping decomposition: how much of `reward_mean` is each term?
+            "rollout/r_vlm_mean": float(vlm_arr.mean()),
+            "rollout/r_cos_mean": float(cos_arr.mean()),
+            "rollout/r_progress_mean": float(prog_arr.mean()),
             "rollout/adv_mean": float(adv_for_log.mean().item()),
             "rollout/adv_std": float(adv_for_log.std().item()),
             "rollout/return_mean": float(ret_for_log.mean().item()),

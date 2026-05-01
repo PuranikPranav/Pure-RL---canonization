@@ -122,6 +122,8 @@ def main() -> None:
         patience=inf_cfg["patience"],
         max_steps=inf_cfg["max_steps"],
         greedy=inf_cfg["greedy"],
+        reward_threshold=inf_cfg.get("reward_threshold"),
+        threshold_patience=int(inf_cfg.get("threshold_patience", 5)),
     )
 
     summary = summarize(trajectories)
