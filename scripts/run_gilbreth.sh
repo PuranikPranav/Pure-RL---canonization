@@ -35,11 +35,11 @@
 #     sbatch --partition=a100-80gb scripts/run_gilbreth.sh
 #
 # CPU / memory: follow RCAC's Gilbreth GPU job template (see their
-# "Gilbreth User Guide: Queues" page). The old ``gpu`` partition on
-# some clusters wanted ~20 CPUs per GPU -- that rule does **not** apply
-# here once you are on the correct hardware partition.
+# "Gilbreth User Guide: Queues" page). Request GPUs with ``--gres=gpu:N``;
+# ``--gpus-per-task`` alone can be ignored by the scheduler here and yields
+# "No GPUs requested".
 #SBATCH --cpus-per-task=4
-#SBATCH --gpus-per-task=1
+#SBATCH --gres=gpu:1
 #SBATCH --mem=50G
 #SBATCH --time=06:00:00
 # Gilbreth buy-in allocation. ``liu334`` from ``slist`` is your *account*

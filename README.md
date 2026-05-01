@@ -397,7 +397,7 @@ Re-running it is safe (skips steps that are already done).
 sbatch scripts/run_gilbreth.sh
 ```
 
-Default SBATCH header in the script: 1 GPU, **4 CPUs**, **50 GB** RAM,
+Default SBATCH header in the script: 1 GPU via ``--gres=gpu:1``, **4 CPUs**, **50 GB** RAM,
 6 hours, on the ``a100-40gb`` partition (see RCAC's *Gilbreth User Guide:
 Queues* for the full list: ``a100-40gb``, ``a100-80gb``, ``a30``, ``a10``,
 ``v100``, etc.). There is **no** generic ``gpu`` partition on Gilbreth.
