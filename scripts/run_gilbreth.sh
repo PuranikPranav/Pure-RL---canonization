@@ -31,9 +31,11 @@
 #SBATCH --gres=gpu:1
 #SBATCH --mem=48G
 #SBATCH --time=06:00:00
-# Uncomment and fill in for your Gilbreth account / partition:
-##SBATCH --account=<your-allocation>
-##SBATCH --partition=gilbreth-d
+# Gilbreth `liu334` allocation -- 2x A100-40GB. Override at submit time
+# with e.g. `sbatch --account=foo --partition=foo scripts/run_gilbreth.sh`
+# if you want to use a different queue.
+#SBATCH --account=liu334
+#SBATCH --partition=liu334
 
 set -euo pipefail
 
